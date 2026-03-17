@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { 
   Plus, 
   FileText, 
@@ -7,7 +7,10 @@ import {
   Trash2, 
   FolderPlus,
   Briefcase,
-  Check
+  Check,
+  Upload,
+  FileUp,
+  Loader2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,7 +20,6 @@ import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
 import {
   Dialog,
   DialogContent,
@@ -29,6 +31,7 @@ import {
 import { cn, formatDate } from '@/lib/utils'
 import { useResumeStore, useProjectStore } from '@/store'
 import type { Resume, Project } from '@/types'
+import { extractTextFromPDF, isPDFFile, formatFileSize } from '@/lib/pdfParser'
 
 function ResumeCard({ resume, onEdit }: { resume: Resume; onEdit: (r: Resume) => void }) {
   const { setDefaultResume, deleteResume } = useResumeStore()
@@ -147,8 +150,41 @@ function AddResumeDialog() {
   const [name, setName] = useState('')
   const [version, setVersion] = useState('1.0')
   const [content, setContent] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [uploadedFile, setUploadedFile] = useState<{ name: string; size: number } | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { addResume, resumes } = useResumeStore()
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    if (!isPDFFile(file)) {
+      alert('请上传 PDF 格式的文件')
+      return
+    }
+
+    setUploading(true)
+    setUploadedFile({ name: file.name, size: file.size })
+
+    try {
+      const extractedText = await extractTextFromPDF(file)
+      setContent(extractedText)
+      
+      // 如果没有设置名称，使用文件名
+      if (!name) {
+        const fileName = file.name.replace(/\.pdf$/i, '')
+        setName(fileName)
+      }
+    } catch (error) {
+      console.error('PDF 解析失败:', error)
+      alert('PDF 解析失败，请尝试手动输入简历内容')
+      setUploadedFile(null)
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const handleSubmit = () => {
     if (!name || !content) return
@@ -163,22 +199,99 @@ function AddResumeDialog() {
     setName('')
     setVersion('1.0')
     setContent('')
+    setUploadedFile(null)
+    setOpen(false)
+  }
+
+  const handleClose = () => {
+    setName('')
+    setVersion('1.0')
+    setContent('')
+    setUploadedFile(null)
     setOpen(false)
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(isOpen) => isOpen ? setOpen(true) : handleClose()}>
       <DialogTrigger asChild>
         <Button>
           <Plus className="h-4 w-4 mr-2" />
           添加简历
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>添加简历</DialogTitle>
         </DialogHeader>
-        <div className="grid gap-4 py-4">
+        <div className="grid gap-4 py-4 overflow-y-auto flex-1">
+          {/* PDF 上传区域 */}
+          <div className="grid gap-2">
+            <Label>上传 PDF 简历</Label>
+            <div
+              className={cn(
+                'border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors',
+                'hover:border-primary hover:bg-primary/5',
+                uploading && 'pointer-events-none opacity-60'
+              )}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              {uploading ? (
+                <div className="flex flex-col items-center gap-2">
+                  <Loader2 className="h-8 w-8 text-primary animate-spin" />
+                  <p className="text-sm text-muted-foreground">正在解析 PDF...</p>
+                </div>
+              ) : uploadedFile ? (
+                <div className="flex flex-col items-center gap-2">
+                  <FileText className="h-8 w-8 text-green-500" />
+                  <p className="text-sm font-medium">{uploadedFile.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatFileSize(uploadedFile.size)} · 已解析
+                  </p>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setUploadedFile(null)
+                      setContent('')
+                      if (fileInputRef.current) {
+                        fileInputRef.current.value = ''
+                      }
+                    }}
+                  >
+                    重新选择
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2">
+                  <FileUp className="h-8 w-8 text-muted-foreground" />
+                  <p className="text-sm font-medium">点击或拖拽上传 PDF 简历</p>
+                  <p className="text-xs text-muted-foreground">
+                    支持 PDF 格式，自动提取文本内容
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <span className="w-full border-t" />
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-background px-2 text-muted-foreground">
+                或手动输入
+              </span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="grid gap-2">
               <Label htmlFor="name">简历名称 *</Label>
@@ -205,13 +318,19 @@ function AddResumeDialog() {
               id="content"
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              placeholder="粘贴你的简历内容（支持 Markdown 格式）..."
-              rows={12}
+              placeholder="粘贴你的简历内容（支持 Markdown 格式）或上传 PDF 文件自动提取..."
+              rows={10}
+              className="font-mono text-sm"
             />
+            {content && (
+              <p className="text-xs text-muted-foreground text-right">
+                {content.length} 字符
+              </p>
+            )}
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>
+          <Button variant="outline" onClick={handleClose}>
             取消
           </Button>
           <Button onClick={handleSubmit} disabled={!name || !content}>
@@ -328,11 +447,101 @@ function AddProjectDialog() {
   )
 }
 
+// 编辑简历对话框
+function EditResumeDialog({ 
+  resume, 
+  open, 
+  onOpenChange 
+}: { 
+  resume: Resume | null
+  open: boolean
+  onOpenChange: (open: boolean) => void 
+}) {
+  const { updateResume } = useResumeStore()
+  const [name, setName] = useState(resume?.name || '')
+  const [version, setVersion] = useState(resume?.version || '')
+  const [content, setContent] = useState(resume?.content || '')
+
+  // 当 resume 变化时更新表单
+  useState(() => {
+    if (resume) {
+      setName(resume.name)
+      setVersion(resume.version)
+      setContent(resume.content)
+    }
+  })
+
+  const handleSubmit = () => {
+    if (!resume || !name || !content) return
+    
+    updateResume(resume.id, { name, version, content })
+    onOpenChange(false)
+  }
+
+  if (!resume) return null
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle>编辑简历</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4 py-4 overflow-y-auto flex-1">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="edit-name">简历名称 *</Label>
+              <Input
+                id="edit-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="例如：前端工程师简历"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="edit-version">版本号</Label>
+              <Input
+                id="edit-version"
+                value={version}
+                onChange={(e) => setVersion(e.target.value)}
+                placeholder="1.0"
+              />
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="edit-content">简历内容 *</Label>
+            <Textarea
+              id="edit-content"
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder="简历内容..."
+              rows={12}
+              className="font-mono text-sm"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button onClick={handleSubmit} disabled={!name || !content}>
+            保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 export function ResumeView() {
   const { resumes } = useResumeStore()
   const { projects } = useProjectStore()
   const [editingResume, setEditingResume] = useState<Resume | null>(null)
-  const [editingProject, setEditingProject] = useState<Project | null>(null)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+
+  const handleEditResume = (resume: Resume) => {
+    setEditingResume(resume)
+    setEditDialogOpen(true)
+  }
 
   return (
     <div className="h-full flex flex-col">
@@ -374,6 +583,9 @@ export function ResumeView() {
                     <p className="text-muted-foreground mb-4">
                       添加你的简历，让 AI 更好地为你生成素材
                     </p>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      支持上传 PDF 文件或手动输入
+                    </p>
                     <AddResumeDialog />
                   </div>
                 ) : (
@@ -382,7 +594,7 @@ export function ResumeView() {
                       <ResumeCard
                         key={resume.id}
                         resume={resume}
-                        onEdit={setEditingResume}
+                        onEdit={handleEditResume}
                       />
                     ))}
                   </div>
@@ -413,7 +625,7 @@ export function ResumeView() {
                       <ProjectCard
                         key={project.id}
                         project={project}
-                        onEdit={setEditingProject}
+                        onEdit={() => {}}
                       />
                     ))}
                   </div>
@@ -423,6 +635,13 @@ export function ResumeView() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* 编辑简历对话框 */}
+      <EditResumeDialog 
+        resume={editingResume}
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+      />
     </div>
   )
 }

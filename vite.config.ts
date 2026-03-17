@@ -13,6 +13,11 @@ export default defineConfig(async () => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  
+  // 优化依赖配置
+  optimizeDeps: {
+    include: ['pdfjs-dist'],
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

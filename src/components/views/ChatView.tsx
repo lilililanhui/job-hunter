@@ -63,8 +63,11 @@ export function ChatView() {
   const { profile } = useUserStore()
   const agent = getAgent()
 
+  // 获取 API Key（兼容新旧字段）
+  const currentApiKey = profile?.apiKey || profile?.openAIApiKey
+  
   // 检查 API Key 是否配置
-  const isConfigured = profile?.openAIApiKey && agent.isInitialized()
+  const isConfigured = currentApiKey && agent.isInitialized()
 
   // 滚动到底部
   useEffect(() => {
@@ -75,10 +78,15 @@ export function ChatView() {
 
   // 初始化 Agent
   useEffect(() => {
-    if (profile?.openAIApiKey && !agent.isInitialized()) {
-      reinitializeAgent(profile.openAIApiKey)
+    if (currentApiKey && !agent.isInitialized()) {
+      reinitializeAgent(
+        currentApiKey,
+        profile?.aiProvider || 'qwen',
+        profile?.aiModel,
+        profile?.customBaseURL
+      )
     }
-  }, [profile?.openAIApiKey])
+  }, [currentApiKey, profile?.aiProvider, profile?.aiModel])
 
   const handleSend = async () => {
     if (!input.trim() || isLoading || !isConfigured) return
@@ -126,7 +134,7 @@ export function ChatView() {
             <div>
               <h1 className="text-lg font-semibold">AI 求职助手</h1>
               <p className="text-sm text-muted-foreground">
-                {isConfigured ? '随时为您服务' : '请先配置 OpenAI API Key'}
+                {isConfigured ? '随时为您服务' : '请先配置 API Key'}
               </p>
             </div>
           </div>
@@ -197,7 +205,7 @@ export function ChatView() {
             <Card className="mb-4 border-amber-200 bg-amber-50 dark:bg-amber-950/20">
               <CardContent className="p-3 flex items-center gap-2 text-amber-700 dark:text-amber-400">
                 <RefreshCw className="h-4 w-4" />
-                <span className="text-sm">请先在设置中配置 OpenAI API Key</span>
+                <span className="text-sm">请先在设置中配置 API Key</span>
               </CardContent>
             </Card>
           )}

@@ -1,22 +1,39 @@
 import { useState, useEffect } from 'react'
-import { Save, Key, User, Target, Check, AlertCircle, Moon, Sun } from 'lucide-react'
+import { Save, Key, User, Target, Check, AlertCircle, Moon, Sun, Bot } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { useUserStore, useAppStore } from '@/store'
-import { reinitializeAgent, getAgent } from '@/agent/orchestrator'
+import { reinitializeAgent } from '@/agent/orchestrator'
+import { AI_PROVIDERS, type AIProvider } from '@/agent/llm'
 
 export function SettingsView() {
   const { profile, setProfile, updateProfile } = useUserStore()
   const { darkMode, setDarkMode } = useAppStore()
   
-  const [apiKey, setApiKey] = useState(profile?.openAIApiKey || '')
+  // AI 配置
+  const [aiProvider, setAiProvider] = useState<AIProvider>(
+    profile?.aiProvider || 'qwen'
+  )
+  const [apiKey, setApiKey] = useState(profile?.apiKey || profile?.openAIApiKey || '')
+  const [aiModel, setAiModel] = useState(
+    profile?.aiModel || AI_PROVIDERS[aiProvider].defaultModel
+  )
+  const [customBaseURL, setCustomBaseURL] = useState(profile?.customBaseURL || '')
+  
+  // 个人信息
   const [name, setName] = useState(profile?.name || '')
   const [email, setEmail] = useState(profile?.email || '')
   const [targetRole, setTargetRole] = useState(profile?.targetRole || '')
@@ -28,6 +45,9 @@ export function SettingsView() {
   
   const [saved, setSaved] = useState(false)
   const [apiKeyValid, setApiKeyValid] = useState<boolean | null>(null)
+  const [validating, setValidating] = useState(false)
+
+  const currentProviderConfig = AI_PROVIDERS[aiProvider]
 
   // 初始化个人资料
   useEffect(() => {
@@ -36,11 +56,20 @@ export function SettingsView() {
       setProfile({
         id: crypto.randomUUID(),
         name: '',
+        aiProvider: 'qwen',
         createdAt: now,
         updatedAt: now,
       })
     }
   }, [])
+
+  // 当切换提供商时，更新默认模型
+  useEffect(() => {
+    const providerConfig = AI_PROVIDERS[aiProvider]
+    if (!providerConfig.models.includes(aiModel)) {
+      setAiModel(providerConfig.defaultModel)
+    }
+  }, [aiProvider])
 
   // 验证 API Key
   const validateApiKey = async () => {
@@ -49,24 +78,44 @@ export function SettingsView() {
       return
     }
 
+    setValidating(true)
+    
     try {
-      const response = await fetch('https://api.openai.com/v1/models', {
+      const baseURL = aiProvider === 'custom' 
+        ? customBaseURL 
+        : currentProviderConfig.baseURL
+      
+      // 使用一个简单的模型列表请求来验证 Key
+      const response = await fetch(`${baseURL}/models`, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
         },
       })
-      setApiKeyValid(response.ok)
       
-      if (response.ok) {
-        reinitializeAgent(apiKey)
+      // 有些 API 可能不支持 /models 端点，但只要返回非 401 就认为可能有效
+      const isValid = response.ok || (response.status !== 401 && response.status !== 403)
+      setApiKeyValid(isValid)
+      
+      if (isValid) {
+        reinitializeAgent(apiKey, aiProvider, aiModel, customBaseURL)
       }
-    } catch {
-      setApiKeyValid(false)
+    } catch (error) {
+      // 如果是网络错误（如 CORS），我们假设 key 可能有效，保存后由后端验证
+      console.warn('验证请求失败（可能是 CORS 问题）:', error)
+      setApiKeyValid(true)
+      reinitializeAgent(apiKey, aiProvider, aiModel, customBaseURL)
+    } finally {
+      setValidating(false)
     }
   }
 
   const handleSave = () => {
     updateProfile({
+      aiProvider,
+      apiKey,
+      aiModel,
+      customBaseURL: aiProvider === 'custom' ? customBaseURL : undefined,
+      // 保持旧字段兼容
       openAIApiKey: apiKey,
       name,
       email,
@@ -76,9 +125,8 @@ export function SettingsView() {
       summary,
     })
 
-    if (apiKey && apiKey !== profile?.openAIApiKey) {
-      reinitializeAgent(apiKey)
-      validateApiKey()
+    if (apiKey) {
+      reinitializeAgent(apiKey, aiProvider, aiModel, customBaseURL)
     }
 
     setSaved(true)
@@ -97,7 +145,7 @@ export function SettingsView() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold mb-1">设置</h1>
-            <p className="text-muted-foreground">配置你的个人信息和 API 密钥</p>
+            <p className="text-muted-foreground">配置你的个人信息和 AI 服务</p>
           </div>
           <Button onClick={handleSave}>
             {saved ? (
@@ -118,20 +166,89 @@ export function SettingsView() {
       {/* Content */}
       <ScrollArea className="flex-1">
         <div className="p-4 max-w-2xl mx-auto space-y-6">
-          {/* API Key */}
+          {/* AI 配置 */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Key className="h-5 w-5" />
-                OpenAI API Key
+                <Bot className="h-5 w-5" />
+                AI 服务配置
               </CardTitle>
               <CardDescription>
-                配置 OpenAI API Key 以启用 AI 功能
+                选择 AI 服务提供商并配置 API Key
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* 提供商选择 */}
               <div className="grid gap-2">
-                <Label htmlFor="apiKey">API Key</Label>
+                <Label>AI 服务提供商</Label>
+                <Select
+                  value={aiProvider}
+                  onValueChange={(value: AIProvider) => {
+                    setAiProvider(value)
+                    setApiKeyValid(null)
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(Object.entries(AI_PROVIDERS) as [AIProvider, typeof AI_PROVIDERS[AIProvider]][]).map(
+                      ([key, config]) => (
+                        <SelectItem key={key} value={key}>
+                          {config.name}
+                        </SelectItem>
+                      )
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* 自定义 Base URL（仅自定义模式） */}
+              {aiProvider === 'custom' && (
+                <div className="grid gap-2">
+                  <Label htmlFor="baseUrl">API Base URL</Label>
+                  <Input
+                    id="baseUrl"
+                    value={customBaseURL}
+                    onChange={(e) => setCustomBaseURL(e.target.value)}
+                    placeholder="https://api.example.com/v1"
+                  />
+                </div>
+              )}
+
+              {/* 模型选择 */}
+              <div className="grid gap-2">
+                <Label>模型</Label>
+                {aiProvider === 'custom' ? (
+                  <Input
+                    value={aiModel}
+                    onChange={(e) => setAiModel(e.target.value)}
+                    placeholder="输入模型名称"
+                  />
+                ) : (
+                  <Select value={aiModel} onValueChange={setAiModel}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {currentProviderConfig.models.map((model) => (
+                        <SelectItem key={model} value={model}>
+                          {model}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              {/* API Key */}
+              <div className="grid gap-2">
+                <Label htmlFor="apiKey">
+                  <div className="flex items-center gap-2">
+                    <Key className="h-4 w-4" />
+                    API Key
+                  </div>
+                </Label>
                 <div className="flex gap-2">
                   <Input
                     id="apiKey"
@@ -141,11 +258,15 @@ export function SettingsView() {
                       setApiKey(e.target.value)
                       setApiKeyValid(null)
                     }}
-                    placeholder="sk-..."
+                    placeholder={currentProviderConfig.keyPrefix + '...'}
                     className="flex-1"
                   />
-                  <Button variant="outline" onClick={validateApiKey}>
-                    验证
+                  <Button 
+                    variant="outline" 
+                    onClick={validateApiKey}
+                    disabled={validating}
+                  >
+                    {validating ? '验证中...' : '验证'}
                   </Button>
                 </div>
                 {apiKeyValid !== null && (
@@ -169,16 +290,19 @@ export function SettingsView() {
                   </div>
                 )}
               </div>
+              
               <p className="text-sm text-muted-foreground">
                 API Key 仅保存在本地，不会上传到任何服务器。
-                <a
-                  href="https://platform.openai.com/api-keys"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-primary hover:underline ml-1"
-                >
-                  获取 API Key
-                </a>
+                {currentProviderConfig.helpUrl && (
+                  <a
+                    href={currentProviderConfig.helpUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline ml-1"
+                  >
+                    获取 API Key
+                  </a>
+                )}
               </p>
             </CardContent>
           </Card>

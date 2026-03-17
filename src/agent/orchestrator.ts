@@ -4,7 +4,8 @@ import type { BaseMessage } from '@langchain/core/messages'
 import { allTools } from './tools'
 import { SYSTEM_PROMPT } from './prompts'
 import { useChatStore, useUserStore } from '@/store'
-import type { ChatMessage } from '@/types'
+import type { ChatMessage, AIProvider } from '@/types'
+import { AI_PROVIDERS } from './llm'
 
 export class JobHunterAgent {
   private llm: ChatOpenAI | null = null
@@ -16,16 +17,41 @@ export class JobHunterAgent {
 
   private initializeFromStore() {
     const { profile } = useUserStore.getState()
-    if (profile?.openAIApiKey) {
-      this.initialize(profile.openAIApiKey)
+    const apiKey = profile?.apiKey || profile?.openAIApiKey
+    if (apiKey) {
+      this.initialize(
+        apiKey, 
+        profile?.aiProvider || 'qwen',
+        profile?.aiModel,
+        profile?.customBaseURL
+      )
     }
   }
 
-  initialize(apiKey: string) {
+  initialize(
+    apiKey: string, 
+    provider: AIProvider = 'qwen',
+    modelName?: string,
+    customBaseURL?: string
+  ) {
+    if (!apiKey) {
+      console.error('Agent 初始化失败: API Key 为空')
+      return
+    }
+
+    const providerConfig = AI_PROVIDERS[provider]
+    const baseURL = provider === 'custom' ? customBaseURL : providerConfig.baseURL
+    const model = modelName || providerConfig.defaultModel
+
+    console.log('初始化 Agent:', { provider, model, baseURL, hasApiKey: !!apiKey })
+
     this.llm = new ChatOpenAI({
-      openAIApiKey: apiKey,
-      modelName: 'gpt-4o',
+      apiKey: apiKey,
+      model: model,
       temperature: 0.7,
+      configuration: {
+        baseURL,
+      },
     }).bindTools(allTools)
 
     // 添加系统提示
@@ -48,7 +74,7 @@ export class JobHunterAgent {
 
   async chat(userMessage: string): Promise<string> {
     if (!this.llm) {
-      return '请先在设置中配置 OpenAI API Key'
+      return '请先在设置中配置 AI 服务的 API Key'
     }
 
     const chatStore = useChatStore.getState()
@@ -146,10 +172,15 @@ export function getAgent(): JobHunterAgent {
   return agentInstance
 }
 
-export function reinitializeAgent(apiKey: string) {
+export function reinitializeAgent(
+  apiKey: string,
+  provider: AIProvider = 'qwen',
+  modelName?: string,
+  customBaseURL?: string
+) {
   if (!agentInstance) {
     agentInstance = new JobHunterAgent()
   }
-  agentInstance.initialize(apiKey)
+  agentInstance.initialize(apiKey, provider, modelName, customBaseURL)
   return agentInstance
 }

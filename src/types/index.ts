@@ -125,6 +125,9 @@ export interface Project {
   updatedAt: string
 }
 
+// AI 服务提供商类型
+export type AIProvider = 'openai' | 'qwen' | 'deepseek' | 'custom'
+
 // 用户配置
 export interface UserProfile {
   id: string
@@ -138,6 +141,12 @@ export interface UserProfile {
   yearsOfExperience?: number
   education?: string
   summary?: string
+  // AI 配置
+  aiProvider?: AIProvider
+  apiKey?: string
+  aiModel?: string
+  customBaseURL?: string
+  // 兼容旧版
   openAIApiKey?: string
   createdAt: string
   updatedAt: string
